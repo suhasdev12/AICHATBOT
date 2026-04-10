@@ -1,0 +1,5 @@
+{
+  "name": "HKBK College of Engineering Faculty AI Chatbot",
+  "description": "An AI-powered framework for faculty to understand HR policies, specifically the HKBK College of Engineering Employee Handbook, through a Q&A chatbot.",
+  "requestFramePermissions": []
+}
