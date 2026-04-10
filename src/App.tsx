@@ -1,8 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI } from "@google/genai";
 import { 
   MessageSquare, 
-  BookOpen, 
   Info, 
   Send, 
   ChevronRight, 
@@ -15,27 +13,38 @@ import {
   Bot,
   User,
   Loader2,
-  Sparkles
+  Sparkles,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import { HANDBOOK_TEXT } from './handbook.ts';
-
-// Initialize Gemini AI
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 interface Message {
   role: 'user' | 'ai';
   content: string;
 }
 
+async function callAI(prompt: string): Promise<string> {
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Server error");
+  return data.text;
+}
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'chat' | 'summary' | 'key-points'>('chat');
   const [summary, setSummary] = useState('');
+  const [summaryError, setSummaryError] = useState('');
   const [keyPoints, setKeyPoints] = useState<string[]>([]);
+  const [keyPointsError, setKeyPointsError] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -46,27 +55,33 @@ export default function App() {
     scrollToBottom();
   }, [messages]);
 
-  useEffect(() => {
-    // Generate initial summary and key points
-    generateInitialContent();
-  }, []);
-
   const generateInitialContent = async () => {
+    // Generate Summary
     try {
-      const summaryResponse = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `Based on the following HKBK Employee Handbook, provide a concise 2-paragraph summary for a new faculty member:\n\n${HANDBOOK_TEXT}`,
-      });
-      setSummary(summaryResponse.text || 'Summary could not be generated.');
+      const summaryText = await callAI(
+        `Based on the following HKBK Employee Handbook, provide a concise 2-paragraph summary for a new faculty member:\n\n${HANDBOOK_TEXT}`
+      );
+      setSummary(summaryText || 'Summary could not be generated.');
+      setSummaryError('');
+    } catch (error: any) {
+      console.error('Error generating summary:', error);
+      setSummaryError(`Could not generate summary: ${error?.message || 'Unknown error'}`);
+    }
 
-      const pointsResponse = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `Based on the following HKBK Employee Handbook, list 8 most critical points a new faculty member must know immediately. Return as a simple list:\n\n${HANDBOOK_TEXT}`,
-      });
-      const points = pointsResponse.text?.split('\n').filter(p => p.trim().length > 0).map(p => p.replace(/^\d+\.\s*|-\s*/, '').trim()) || [];
+    // Generate Key Points
+    try {
+      const pointsText = await callAI(
+        `Based on the following HKBK Employee Handbook, list 8 most critical points a new faculty member must know immediately. Return as a simple numbered list:\n\n${HANDBOOK_TEXT}`
+      );
+      const points = pointsText
+        .split('\n')
+        .filter(p => p.trim().length > 0)
+        .map(p => p.replace(/^\d+\.\s*|-\s*/, '').trim());
       setKeyPoints(points);
-    } catch (error) {
-      console.error('Error generating initial content:', error);
+      setKeyPointsError('');
+    } catch (error: any) {
+      console.error('Error generating key points:', error);
+      setKeyPointsError(`Could not extract key points: ${error?.message || 'Unknown error'}`);
     }
   };
 
@@ -79,15 +94,14 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `You are an HR Assistant for HKBK College of Engineering. Use the following Employee Handbook text to answer the user's question. If the answer is not in the text, say you don't know and suggest contacting the HR department.\n\nHandbook Context:\n${HANDBOOK_TEXT}\n\nUser Question: ${userMessage}`,
-      });
-
-      setMessages(prev => [...prev, { role: 'ai', content: response.text || "I'm sorry, I couldn't process that request." }]);
-    } catch (error) {
-      console.error('Error calling Gemini:', error);
-      setMessages(prev => [...prev, { role: 'ai', content: "Error: Could not reach the AI service. Please try again later." }]);
+      const text = await callAI(
+        `You are an HR Assistant for HKBK College of Engineering. Use the following Employee Handbook text to answer the user's question. If the answer is not in the text, say you don't know and suggest contacting the HR department.\n\nHandbook Context:\n${HANDBOOK_TEXT}\n\nUser Question: ${userMessage}`
+      );
+      setMessages(prev => [...prev, { role: 'ai', content: text || "I'm sorry, I couldn't process that request." }]);
+    } catch (error: any) {
+      console.error('Error calling AI:', error);
+      const errorMsg = error?.message || "Error: Could not reach the AI service. Please try again later.";
+      setMessages(prev => [...prev, { role: 'ai', content: `⚠️ ${errorMsg}` }]);
     } finally {
       setIsLoading(false);
     }
@@ -119,7 +133,7 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* Left Sidebar - Navigation & Info */}
+          {/* Left Sidebar */}
           <div className="lg:col-span-3 space-y-6">
             <nav className="space-y-1">
               <button 
@@ -176,7 +190,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Main Content Area */}
+          {/* Main Content */}
           <div className="lg:col-span-9">
             <AnimatePresence mode="wait">
               {activeTab === 'chat' && (
@@ -187,7 +201,6 @@ export default function App() {
                   exit={{ opacity: 0, y: -10 }}
                   className="bg-white rounded-3xl shadow-sm border border-gray-100 h-[calc(100vh-12rem)] flex flex-col overflow-hidden"
                 >
-                  {/* Chat Header */}
                   <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
@@ -195,12 +208,11 @@ export default function App() {
                       </div>
                       <div>
                         <h2 className="text-sm font-bold">Policy Assistant</h2>
-                        <p className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">Powered by Gemini AI</p>
+                        <p className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">Powered by OpenRouter AI</p>
                       </div>
                     </div>
                   </div>
 
-                  {/* Messages Area */}
                   <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin scrollbar-thumb-gray-200">
                     {messages.length === 0 && (
                       <div className="h-full flex flex-col items-center justify-center text-center space-y-4 max-w-md mx-auto">
@@ -239,9 +251,7 @@ export default function App() {
                           </div>
                           <div className={`p-4 rounded-2xl text-sm leading-relaxed ${msg.role === 'user' ? 'bg-gray-100 text-gray-800 rounded-tr-none' : 'bg-blue-50 text-blue-900 border border-blue-100 rounded-tl-none shadow-sm'}`}>
                             <div className="prose prose-sm max-w-none prose-blue">
-                              <ReactMarkdown>
-                                {msg.content}
-                              </ReactMarkdown>
+                              <ReactMarkdown>{msg.content}</ReactMarkdown>
                             </div>
                           </div>
                         </div>
@@ -263,7 +273,6 @@ export default function App() {
                     <div ref={chatEndRef} />
                   </div>
 
-                  {/* Input Area */}
                   <div className="p-6 bg-gray-50/50 border-t border-gray-100">
                     <div className="relative flex items-center gap-2">
                       <input 
@@ -305,10 +314,26 @@ export default function App() {
                   </div>
                   
                   <div className="prose prose-blue max-w-none">
-                    {!summary ? (
-                      <div className="flex items-center gap-3 text-gray-400">
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        <span>Generating summary...</span>
+                    {summaryError ? (
+                      <div className="flex items-start gap-3 bg-red-50 p-4 rounded-xl border border-red-200">
+                        <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+                        <div>
+                          <p className="text-sm font-semibold text-red-900">{summaryError}</p>
+                          <button onClick={generateInitialContent} className="text-xs text-red-600 underline mt-2 hover:text-red-700">
+                            Try again
+                          </button>
+                        </div>
+                      </div>
+                    ) : !summary ? (
+                      <div className="flex flex-col items-center justify-center gap-4 py-8 text-center">
+                        <p className="text-gray-600">Click below to generate a summary of the handbook</p>
+                        <button 
+                          onClick={generateInitialContent}
+                          className="bg-blue-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-blue-700 transition-colors flex items-center gap-2"
+                        >
+                          <Sparkles className="w-5 h-5" />
+                          Generate Summary
+                        </button>
                       </div>
                     ) : (
                       <div className="text-gray-700 leading-relaxed text-lg italic border-l-4 border-blue-500 pl-6 py-2 bg-blue-50/30 rounded-r-xl">
@@ -358,10 +383,26 @@ export default function App() {
                     </div>
                   </div>
 
-                  {!keyPoints.length ? (
-                    <div className="flex items-center gap-3 text-gray-400">
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span>Extracting key points...</span>
+                  {keyPointsError ? (
+                    <div className="flex items-start gap-3 bg-red-50 p-4 rounded-xl border border-red-200">
+                      <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-sm font-semibold text-red-900">{keyPointsError}</p>
+                        <button onClick={generateInitialContent} className="text-xs text-red-600 underline mt-2 hover:text-red-700">
+                          Try again
+                        </button>
+                      </div>
+                    </div>
+                  ) : !keyPoints.length ? (
+                    <div className="flex flex-col items-center justify-center gap-4 py-8 text-center">
+                      <p className="text-gray-600">Click below to extract critical key points from the handbook</p>
+                      <button 
+                        onClick={generateInitialContent}
+                        className="bg-blue-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-blue-700 transition-colors flex items-center gap-2"
+                      >
+                        <Sparkles className="w-5 h-5" />
+                        Extract Key Points
+                      </button>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
